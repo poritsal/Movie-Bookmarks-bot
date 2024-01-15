@@ -2,10 +2,10 @@ import telebot
 from telebot import types
 import requests
 import sqlite3
-import json
 
 TOKEN = '6313155683:AAFIhi1Hc4Z_SWreO9LcqVtzzoDD3yfbXrw'
 bot = telebot.TeleBot(TOKEN)
+
 
 def init_db():
     conn = sqlite3.connect('movies.db')
@@ -20,7 +20,6 @@ def init_db():
     )
     ''')
     conn.commit()
-    cursor.close()
     conn.close()
 
 
@@ -47,10 +46,10 @@ def get_movie_details(film_id):
 
         poster_url = movie_data.get("posterUrlPreview", "")
         description = movie_data.get("description", "")
-        nameRu = movie_data.get("nameRu", "")
+        name_ru = movie_data.get("nameRu", "")
         year = movie_data.get("year", "")
 
-        return poster_url, description, nameRu, year
+        return poster_url, description, name_ru, year
     else:
         print(f"Ошибка {response.status_code}: {response.text}")
         return None, None, None, None
@@ -59,49 +58,72 @@ def get_movie_details(film_id):
 def get_favorites(user_id):
     conn = sqlite3.connect('movies.db')
     cursor = conn.cursor()
-
-    cursor.execute('''
-    SELECT movie_id, name, year FROM favorites WHERE user_id = ?
-    ''', (user_id,))
-
+    cursor.execute('SELECT movie_id, name, year FROM favorites WHERE user_id = ?', (user_id,))
     favorites = cursor.fetchall()
-
     cursor.close()
     conn.close()
-
     return favorites
+
 
 def add_to_favorites(user_id, film_id):
     conn = sqlite3.connect('movies.db')
     cursor = conn.cursor()
-
-    poster_url, description, nameRu, year = get_movie_details(film_id)
+    poster_url, description, name_ru, year = get_movie_details(film_id)
     cursor.execute("INSERT INTO favorites (user_id, movie_id, name, year) VALUES (?, ?, ?, ?)",
-                   (user_id, film_id, nameRu, year))
-
+                   (user_id, film_id, name_ru, year))
     conn.commit()
     cursor.close()
     conn.close()
+
 
 def remove_favorite(user_id, movie_id):
     conn = sqlite3.connect('movies.db')
     cursor = conn.cursor()
-
     cursor.execute("DELETE FROM favorites WHERE user_id=? AND movie_id=?", (user_id, movie_id))
     conn.commit()
-
     cursor.close()
     conn.close()
+
+
+def is_movie_in_favorites(user_id, film_id):
+    favorites = get_favorites(user_id)
+    return any(movie[0] == film_id for movie in favorites)
+
 
 @bot.message_handler(commands=['start'])
 def start(message):
     init_db()
-    bot.send_message(message.chat.id, "Привет! Я бот для любителей кино.")
+
+    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    button_add = telebot.types.KeyboardButton("Добавить")
+    button_remove = telebot.types.KeyboardButton("Удалить")
+    button_favorites = telebot.types.KeyboardButton("Любимое")
+
+    keyboard.add(button_add, button_remove, button_favorites)
+
+    bot.send_message(message.chat.id, "Привет! Я бот для любителей кино.", reply_markup=keyboard)
+
+
+@bot.message_handler(func=lambda message: message.text == "Добавить")
+def handle_add(message):
+    search_movie(message)
+
+
+@bot.message_handler(func=lambda message: message.text == "Удалить")
+def handle_remove(message):
+    remove_movie(message)
+
+
+@bot.message_handler(func=lambda message: message.text == "Любимое")
+def handle_favorites(message):
+    show_favorites(message)
+
 
 @bot.message_handler(commands=['add'])
 def search_movie(message):
     bot.send_message(message.chat.id, "Введите название фильма:")
     bot.register_next_step_handler(message, process_movie_search)
+
 
 def process_movie_search(message):
     chat_id = message.chat.id
@@ -135,22 +157,20 @@ def process_movie_search(message):
 def remove_movie(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
-
     favorites = get_favorites(user_id)
 
     if favorites:
         page = 1
         items_per_page = 5
         total_pages = -(-len(favorites) // items_per_page)
-
         show_page(chat_id, favorites, page, items_per_page, total_pages)
     else:
         bot.send_message(chat_id, "У вас пока нет любимых фильмов.")
 
+
 def show_page(chat_id, favorites, page, items_per_page, total_pages):
     start_idx = (page - 1) * items_per_page
     end_idx = start_idx + items_per_page
-
     keyboard = telebot.types.InlineKeyboardMarkup()
 
     for fav in favorites[start_idx:end_idx]:
@@ -166,37 +186,36 @@ def show_page(chat_id, favorites, page, items_per_page, total_pages):
         if page > 1:
             page_buttons.append(telebot.types.InlineKeyboardButton(
                 text="<< Назад",
-                callback_data=f"removepage_{page-1}"
+                callback_data=f"removepage_{page - 1}"
             ))
         if page < total_pages:
             page_buttons.append(telebot.types.InlineKeyboardButton(
                 text="Вперед >>",
-                callback_data=f"removepage_{page+1}"
+                callback_data=f"removepage_{page + 1}"
             ))
         keyboard.add(*page_buttons)
 
     bot.send_message(chat_id, f"Страница {page}/{total_pages}:", reply_markup=keyboard)
 
+
 @bot.message_handler(commands=['favorites'])
 def show_favorites(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
-
     favorites = get_favorites(user_id)
 
     if favorites:
         page = 1
         items_per_page = 5
         total_pages = -(-len(favorites) // items_per_page)
-
         send_page(chat_id, favorites, page, items_per_page, total_pages)
     else:
         bot.send_message(chat_id, "У вас пока нет любимых фильмов.")
 
+
 def send_page(chat_id, favorites, page, items_per_page, total_pages):
     start_idx = (page - 1) * items_per_page
     end_idx = start_idx + items_per_page
-
     keyboard = telebot.types.InlineKeyboardMarkup()
 
     for fav in favorites[start_idx:end_idx]:
@@ -212,12 +231,12 @@ def send_page(chat_id, favorites, page, items_per_page, total_pages):
         if page > 1:
             page_buttons.append(telebot.types.InlineKeyboardButton(
                 text="<< Назад",
-                callback_data=f"showpage_{page-1}"
+                callback_data=f"showpage_{page - 1}"
             ))
         if page < total_pages:
             page_buttons.append(telebot.types.InlineKeyboardButton(
                 text="Вперед >>",
-                callback_data=f"showpage_{page+1}"
+                callback_data=f"showpage_{page + 1}"
             ))
         keyboard.add(*page_buttons)
 
@@ -231,19 +250,27 @@ def callback_handler(call):
 
     if call.data.startswith("info_"):
         film_id = int(call.data.split("_")[1])
-        poster_url, description, nameRu, year = get_movie_details(film_id)
-
+        poster_url, description, name_ru, year = get_movie_details(film_id)
         keyboard = types.InlineKeyboardMarkup()
-        callback_button_add = types.InlineKeyboardButton(
-            text="Добавить в любимое",
-            callback_data=f"adding_{film_id}"
-        )
-        keyboard.add(callback_button_add)
-
+        if not is_movie_in_favorites(chat_id, film_id):
+            callback_button_add = types.InlineKeyboardButton(
+                text="Добавить в любимое",
+                callback_data=f"adding_{film_id}"
+            )
+            keyboard.add(callback_button_add)
+        else:
+            callback_button_add = types.InlineKeyboardButton(
+                text="Фильм уже добавлен в список любимых",
+                callback_data=f"identical"
+            )
+            keyboard.add(callback_button_add)
         bot.send_photo(chat_id, poster_url, caption=description, reply_to_message_id=message_id, reply_markup=keyboard)
 
     elif call.data == "repeat":
         bot.send_message(chat_id, "К сожалению, по вашему запросу ничего не найдено...", reply_to_message_id=message_id)
+
+    elif call.data == "identical":
+        bot.answer_callback_query(callback_query_id=call.id, show_alert=True, text="Фильм уже добавлен в список любимых, попробуйте уточнить запрос")
 
     elif call.data.startswith("adding_"):
         film_id = int(call.data.split("_")[1])
@@ -281,5 +308,6 @@ def callback_handler(call):
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):
     bot.reply_to(message, "Неизвестная команда")
+
 
 bot.infinity_polling()
